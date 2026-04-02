@@ -1,10 +1,3 @@
---[[
-    SEVERE NOTIFIER V3 - CUSTOM UI EDITION
-    Desenvolvido para: SEVERE (External Memory Reader)
-    Estilo: Custom UI (Inspirado em Death Ball AP / New UI)
-    Funcionalidades: Rainbow Title, iOS Toggles, Delete to Hide, Discord Webhook
-]]
-
 -- Serviços
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
