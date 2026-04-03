@@ -1,7 +1,7 @@
 --[[
     BRAINROT NOTIFIER V2 - ULTIMATE EDITION (PRIORITY FOCUS)
+    CORRIGIDO: Filtro de Bases, Coordenadas Amigáveis e Detecção de ZONAS
     Desenvolvido para: Notificação EXCLUSIVA de Sammino_Vermicello, Karker_Spot, Rubrizzio_Fortuna_Mangiatore, Strawberry_Elephant e John_Pork.
-    Funcionalidades: GUI, Auto Server Hop (5 min), Manual Server Hop, Webhook Discord
 ]]
 
 local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
@@ -32,34 +32,77 @@ local RunService = game:GetService("RunService")
 
 -- Variáveis de Configuração
 local _G = getgenv and getgenv() or _G
-_G.WebhookURL = "https://ptb.discord.com/api/webhooks/1488318065220260102/o9XXB175X8qtZmCmeivz6_PiTfqIGe9qjEYLS0V6HY0RQCqH2Zo0oOxO93oFLvHqyBIW"
+_G.WebhookURL = "https://ptb.discord.com/api/webhooks/1489310598238830803/WshnnHaAobRqes3QBCdhPO_qgRcm5_giwtXwUir4wKCF5jbhrGP7TUAtcroj8UOdo03H"
 _G.AutoServerHop = true
 _G.DetectionEnabled = true
 
--- LISTA DE PRIORIDADES EXCLUSIVAS (Ordem de foco e necessidade)
+-- LISTA DE PRIORIDADES EXCLUSIVAS
 local TARGET_NAMES = {
-    "Sammino_Vermicello", -- Prioridade 1
-    "Karker_Spot",        -- Prioridade 2
-    "Rubrizzio_Fortuna_Mangiatore", -- Prioridade 3
-    "Strawberry_Elephant", -- Prioridade 4
-    "John_Pork"           -- Prioridade 5
+    "Sammino_Vermicello", 
+    "Karker_Spot",        
+    "Rubrizzio_Fortuna_Mangiatore", 
+    "Strawberry_Elephant", 
+    "John_Pork"           
 }
 
 local notifiedEntities = {}
 local lastHop = tick()
 local hopInterval = 300 -- 5 minutos
 
+-- Função para formatar coordenadas de forma legível
+local function formatCoords(pos)
+    if not pos then return "N/A" end
+    return string.format("X: %.0f, Y: %.0f, Z: %.0f", pos.X, pos.Y, pos.Z)
+end
+
+-- Função para detectar a ZONA onde o item está
+local function getZoneName(instance)
+    -- Tenta encontrar o nome da Zona subindo na hierarquia do objeto
+    -- Geralmente os itens ficam dentro de pastas como Workspace.Zones["Rare Zone"].Items
+    local p = instance.Parent
+    while p and p ~= Workspace do
+        local name = p.Name:lower()
+        if name:find("zone") or name:find("area") or name:find("map") then
+            return p.Name
+        end
+        p = p.Parent
+    end
+    
+    -- Se não achou pelo pai, tenta verificar se o objeto está dentro de alguma parte de detecção de zona (Region3/Touch)
+    -- Ou retorna "Desconhecida" se não houver estrutura clara
+    return "Zona Desconhecida"
+end
+
+-- Função para verificar se o objeto está na base de alguém
+local function isInPlayerBase(instance)
+    local p = instance.Parent
+    while p and p ~= Workspace do
+        local name = p.Name:lower()
+        -- Filtra bases de Tycoon/Simulator comuns
+        if name:find("base") or name:find("plot") or name:find("house") or name:find("owned") or name:find("player") then
+            return true
+        end
+        -- Se o pai for o nome de um jogador atual
+        if Players:FindFirstChild(p.Name) then
+            return true
+        end
+        p = p.Parent
+    end
+    return false
+end
+
 -- Função de Webhook
-local function sendWebhook(entityName, position, placeId, jobId, accountName)
+local function sendWebhook(entityName, position, zoneName, placeId, jobId, accountName)
     if _G.WebhookURL == "" or _G.WebhookURL == "SUA_WEBHOOK_URL_AQUI" then return end
     
+    local formattedPos = formatCoords(position)
     local data = {
         ["content"] = "@everyone",
         ["embeds"] = {{
             ["title"] = "🚨 ALVO PRIORITÁRIO DETECTADO!",
-            ["description"] = string.format("**Entidade:** %s\n**Localização:** %s\n**Conta:** %s\n**Place ID:** %d\n**Job ID:** %s", 
-                entityName, tostring(position), accountName, placeId, jobId),
-            ["color"] = 16711680, -- Vermelho para destaque
+            ["description"] = string.format("**Entidade:** %s\n**Zona:** %s\n**Localização:** %s\n**Conta:** %s\n**Place ID:** %d\n**Job ID:** %s", 
+                entityName, zoneName, formattedPos, accountName, placeId, jobId),
+            ["color"] = 16711680,
             ["footer"] = {["text"] = "Brainrot Notifier V2 - Priority Focus"}
         }}
     }
@@ -73,15 +116,11 @@ local function sendWebhook(entityName, position, placeId, jobId, accountName)
                 Headers = {["Content-Type"] = "application/json"},
                 Body = HttpService:JSONEncode(data)
             })
-        else
-            warn("Executor não suporta requisições HTTP externas.")
         end
     end)
-    
-    if not success then warn("Erro Webhook: " .. tostring(err)) end
 end
 
--- Função de Server Hop (Client-Side)
+-- Função de Server Hop
 local function serverHop()
     local Http = HttpService
     local Api = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Desc&limit=100"
@@ -109,26 +148,22 @@ local function serverHop()
         if #availableServers > 0 then
             local randomServer = availableServers[math.random(1, #availableServers)]
             TeleportService:TeleportToPlaceInstance(game.PlaceId, randomServer.id, Players.LocalPlayer)
-            return
-        else
-            warn("Nenhum servidor disponível encontrado. Tentando novamente...")
         end
-    else
-        warn("Erro ao obter lista de servidores. Tentando novamente...")
     end
-    
-    task.wait(5)
-    serverHop()
 end
 
--- Lógica de Detecção Aprimorada (Recursiva e com Filtro de Boss)
+-- Lógica de Detecção Aprimorada
 local function checkEntities()
     if not _G.DetectionEnabled then return end
     
-    local currentNotified = {}
     for _, instance in pairs(Workspace:GetDescendants()) do
-        -- Filtro de Boss: Ignorar se tiver Humanoid (conforme imagem da Dex)
+        -- Filtro de Boss/NPC: Ignorar se tiver Humanoid
         if instance:IsA("Model") and instance:FindFirstChildOfClass("Humanoid") then
+            continue
+        end
+
+        -- NOVO FILTRO: Ignorar se estiver em uma base de jogador
+        if isInPlayerBase(instance) then
             continue
         end
 
@@ -136,7 +171,6 @@ local function checkEntities()
         local entityName = instance.Name
         local entityPosition = nil
 
-        -- 1. Verificar o nome da própria instância (ID dinâmico ou nome real)
         local instanceNameLower = instance.Name:lower()
         for _, target in pairs(TARGET_NAMES) do
             if instanceNameLower:find(target:lower(), 1, true) then
@@ -145,7 +179,6 @@ local function checkEntities()
             end
         end
 
-        -- 2. Se não encontrou, verificar nos filhos (Detecção Profunda para IDs dinâmicos)
         if not targetFound then
             for _, child in pairs(instance:GetChildren()) do
                 local childNameLower = child.Name:lower()
@@ -160,9 +193,7 @@ local function checkEntities()
             end
         end
 
-        -- Se encontrou um alvo prioritário
         if targetFound and not notifiedEntities[instance] then
-            -- Determinar posição (PrimaryPart ou Position)
             if instance:IsA("Model") then
                 entityPosition = instance.PrimaryPart and instance.PrimaryPart.Position or instance:GetPivot().Position
             elseif instance:IsA("BasePart") then
@@ -170,12 +201,12 @@ local function checkEntities()
             end
 
             if entityPosition then
+                local zoneName = getZoneName(instance)
                 notifiedEntities[instance] = true
-                currentNotified[instance] = true
-                sendWebhook(entityName, entityPosition, game.PlaceId, game.JobId, Players.LocalPlayer.Name)
+                sendWebhook(entityName, entityPosition, zoneName, game.PlaceId, game.JobId, Players.LocalPlayer.Name)
                 Rayfield:Notify({
                     Title = "ALVO PRIORITÁRIO!",
-                    Content = "Encontrado: " .. entityName,
+                    Content = "Encontrado: " .. entityName .. " na " .. zoneName,
                     Duration = 10,
                     Image = 4483362458,
                 })
@@ -183,7 +214,6 @@ local function checkEntities()
         end
     end
 
-    -- Limpar cache de notificações para entidades removidas
     for entity, _ in pairs(notifiedEntities) do
         if not entity.Parent then
             notifiedEntities[entity] = nil
@@ -244,7 +274,7 @@ end)
 
 Rayfield:Notify({
    Title = "Notifier Ativo",
-   Content = "Focado em alvos prioritários!",
+   Content = "Corrigido: Filtro de bases e Detecção de Zonas!",
    Duration = 5,
    Image = 4483362458,
 })
