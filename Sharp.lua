@@ -1,118 +1,208 @@
 --[[
     ============================================================
-    Sharp Afiado - Ad Cooldown Bypass & Free Box Opener
+    Sharp Afiado - Ad Cooldown Bypass VERSÃO CORRIGIDA
     ============================================================
     Funcionalidades:
       1) Remove o cooldown do anúncio (botão "Ver Anúncio" sempre visível)
-      2) Tenta pular o anúncio de 6 segundos (dispara o RemoteEvent direto)
-      3) Loop automático opcional para abrir caixas infinitas por anúncio
+      2) Dispara o RemoteEvent AdBoxBuy corretamente
+      3) Loop automático opcional para abrir caixas infinitas
     
     Caixas disponíveis: ToyBox, BlacksmithBox, FoodBox
-    
-    Compatível com: Delta, Synapse, Fluxus, etc.
     ============================================================
 ]]
 
 -- ===================== CONFIGURAÇÃO =====================
 local CONFIG = {
-    AutoFarm = false,          -- Mude para true para abrir caixas automaticamente em loop
-    BoxName = "ToyBox",        -- Qual caixa abrir: "ToyBox", "BlacksmithBox" ou "FoodBox"
-    DelayEntreAberturas = 2,   -- Segundos entre cada abertura automática
+    AutoFarm = false,
+    BoxName = "ToyBox",
+    DelayEntreAberturas = 1,
 }
 -- ========================================================
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local AdService = game:GetService("AdService")
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- ===== Encontrar o RemoteEvent AdBoxBuy =====
-local remoteFolder = ReplicatedStorage:WaitForChild("Shared"):WaitForChild("Remote"):WaitForChild("RemoteEvents")
-local adBoxBuyRemote = remoteFolder:WaitForChild("AdBoxBuy")
+-- ===== VARIÁVEIS GLOBAIS =====
+local adBoxBuyRemote = nil
+local remoteFound = false
+local debugMode = true
 
-print("[SharpAd] RemoteEvent AdBoxBuy encontrado!")
-
--- ===== MÉTODO 1: Disparar o RemoteEvent diretamente (pula o anúncio) =====
-local function abrirCaixaGratis(boxName)
-    local clientToken = math.random()
-    adBoxBuyRemote:FireServer(boxName or CONFIG.BoxName, clientToken)
-    print("[SharpAd] FireServer enviado para: " .. (boxName or CONFIG.BoxName) .. " | Token: " .. tostring(clientToken))
+-- ===== FUNÇÃO DE LOG =====
+local function log(msg, isError)
+    local prefix = isError and "[❌ ERRO]" or "[✓ INFO]"
+    print(prefix .. " " .. msg)
 end
 
--- ===== MÉTODO 2: Forçar o botão de anúncio sempre visível =====
-local function forcarBotaoVisivel()
-    -- Hookear o AdService para sempre retornar que o anúncio está disponível
-    -- Isso faz o jogo pensar que sempre tem anúncio pronto
-    local mt = getrawmetatable(AdService)
-    if mt and setreadonly then
-        local oldNamecall = mt.__namecall
-        setreadonly(mt, false)
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            if method == "GetAdAvailabilityNowAsync" then
-                -- Retorna um objeto fake dizendo que o anúncio está disponível
-                -- Isso remove o cooldown visual do botão
-                return {AdAvailabilityResult = Enum.AdAvailabilityResult.IsAvailable}
+-- ===== ESTRATÉGIA 1: Buscar RemoteEvent no caminho padrão =====
+local function buscarRemoteEstrategia1()
+    log("Estratégia 1: Buscando em ReplicatedStorage.Shared.Remote.RemoteEvents...")
+    
+    local shared = ReplicatedStorage:FindFirstChild("Shared")
+    if not shared then
+        log("Shared não encontrado", true)
+        return nil
+    end
+    
+    local remote = shared:FindFirstChild("Remote")
+    if not remote then
+        log("Remote não encontrado", true)
+        return nil
+    end
+    
+    local remoteEvents = remote:FindFirstChild("RemoteEvents")
+    if not remoteEvents then
+        log("RemoteEvents não encontrado", true)
+        return nil
+    end
+    
+    local adBoxBuy = remoteEvents:FindFirstChild("AdBoxBuy")
+    if adBoxBuy then
+        log("✓ AdBoxBuy encontrado em ReplicatedStorage.Shared.Remote.RemoteEvents!")
+        return adBoxBuy
+    end
+    
+    log("AdBoxBuy não encontrado neste caminho", true)
+    return nil
+end
+
+-- ===== ESTRATÉGIA 2: Buscar recursivamente em toda ReplicatedStorage =====
+local function buscarRemoteEstrategia2()
+    log("Estratégia 2: Buscando AdBoxBuy recursivamente em ReplicatedStorage...")
+    
+    local function buscarRecursivo(obj)
+        if obj:IsA("RemoteEvent") and obj.Name == "AdBoxBuy" then
+            return obj
+        end
+        
+        for _, child in pairs(obj:GetChildren()) do
+            local resultado = buscarRecursivo(child)
+            if resultado then
+                return resultado
             end
-            return oldNamecall(self, ...)
-        end)
-        setreadonly(mt, true)
-        print("[SharpAd] AdService hookado - cooldown removido!")
+        end
+        
+        return nil
+    end
+    
+    local resultado = buscarRecursivo(ReplicatedStorage)
+    if resultado then
+        log("✓ AdBoxBuy encontrado recursivamente em: " .. resultado:GetFullName())
+        return resultado
+    end
+    
+    log("AdBoxBuy não encontrado recursivamente", true)
+    return nil
+end
+
+-- ===== ESTRATÉGIA 3: Buscar em toda a hierarquia do jogo =====
+local function buscarRemoteEstrategia3()
+    log("Estratégia 3: Buscando AdBoxBuy em toda a hierarquia...")
+    
+    local function buscarRecursivoGlobal(obj, depth)
+        depth = depth or 0
+        if depth > 10 then return nil end
+        
+        if obj:IsA("RemoteEvent") and obj.Name == "AdBoxBuy" then
+            return obj
+        end
+        
+        for _, child in pairs(obj:GetChildren()) do
+            local resultado = buscarRecursivoGlobal(child, depth + 1)
+            if resultado then
+                return resultado
+            end
+        end
+        
+        return nil
+    end
+    
+    local resultado = buscarRecursivoGlobal(game)
+    if resultado then
+        log("✓ AdBoxBuy encontrado em: " .. resultado:GetFullName())
+        return resultado
+    end
+    
+    log("AdBoxBuy não encontrado em nenhum lugar", true)
+    return nil
+end
+
+-- ===== ESTRATÉGIA 4: Esperar pelo RemoteEvent ser criado =====
+local function buscarRemoteEstrategia4()
+    log("Estratégia 4: Aguardando RemoteEvent ser criado...")
+    
+    local shared = ReplicatedStorage:FindFirstChild("Shared")
+    if shared then
+        local remote = shared:FindFirstChild("Remote")
+        if remote then
+            local remoteEvents = remote:FindFirstChild("RemoteEvents")
+            if remoteEvents then
+                local adBoxBuy = remoteEvents:WaitForChild("AdBoxBuy", 5)
+                if adBoxBuy then
+                    log("✓ AdBoxBuy criado e encontrado!")
+                    return adBoxBuy
+                end
+            end
+        end
+    end
+    
+    log("Timeout esperando AdBoxBuy", true)
+    return nil
+end
+
+-- ===== ENCONTRAR O REMOTE EVENT =====
+local function encontrarRemote()
+    log("Iniciando busca pelo RemoteEvent AdBoxBuy...")
+    
+    -- Tentar todas as estratégias
+    local remote = buscarRemoteEstrategia1()
+    if remote then return remote end
+    
+    task.wait(0.5)
+    remote = buscarRemoteEstrategia2()
+    if remote then return remote end
+    
+    task.wait(0.5)
+    remote = buscarRemoteEstrategia3()
+    if remote then return remote end
+    
+    task.wait(0.5)
+    remote = buscarRemoteEstrategia4()
+    if remote then return remote end
+    
+    log("FALHA: Não foi possível encontrar o RemoteEvent AdBoxBuy!", true)
+    return nil
+end
+
+-- ===== FUNÇÃO PARA ABRIR CAIXA =====
+local function abrirCaixaGratis(boxName)
+    if not adBoxBuyRemote then
+        log("RemoteEvent não está disponível!", true)
+        return false
+    end
+    
+    local clientToken = math.random()
+    
+    log("Disparando: " .. boxName .. " | Token: " .. tostring(clientToken))
+    
+    local sucesso, erro = pcall(function()
+        adBoxBuyRemote:FireServer(boxName, clientToken)
+    end)
+    
+    if sucesso then
+        log("✓ FireServer enviado com sucesso!")
+        return true
     else
-        print("[SharpAd] Hook do metatable não suportado, usando método alternativo...")
+        log("Erro ao disparar: " .. tostring(erro), true)
+        return false
     end
 end
 
--- ===== MÉTODO 3: Buscar e forçar o botão BuyAd na GUI =====
-local function buscarEForcarBotao()
-    task.spawn(function()
-        while true do
-            -- Procurar o botão BuyAd em toda a PlayerGui
-            for _, gui in pairs(playerGui:GetDescendants()) do
-                if gui:IsA("TextButton") or gui:IsA("ImageButton") then
-                    -- Procurar botões relacionados ao anúncio
-                    local parent = gui.Parent
-                    if parent and parent.Name == "BuyAd" then
-                        gui.Visible = true
-                    end
-                    -- Também verificar pelo nome direto
-                    if gui.Name == "BuyAd" then
-                        gui.Visible = true
-                    end
-                end
-                -- Forçar frames chamados BuyAd visíveis
-                if gui.Name == "BuyAd" and gui:IsA("GuiObject") then
-                    gui.Visible = true
-                end
-            end
-            task.wait(0.5)
-        end
-    end)
-    print("[SharpAd] Loop de forçar botão visível ativo!")
-end
-
--- ===== MÉTODO 4: Auto-farm de caixas por anúncio =====
-local function autoFarmCaixas()
-    if not CONFIG.AutoFarm then return end
-    print("[SharpAd] Auto-farm ATIVADO! Caixa: " .. CONFIG.BoxName)
-    print("[SharpAd] Abrindo caixas a cada " .. CONFIG.DelayEntreAberturas .. " segundos...")
-    
-    task.spawn(function()
-        local contador = 0
-        while CONFIG.AutoFarm do
-            contador = contador + 1
-            abrirCaixaGratis(CONFIG.BoxName)
-            print("[SharpAd] Caixa #" .. contador .. " aberta!")
-            task.wait(CONFIG.DelayEntreAberturas)
-        end
-    end)
-end
-
--- ===== CRIAR GUI DE CONTROLE =====
+-- ===== CRIAR GUI =====
 local function criarGUI()
-    -- Remover GUI antiga se existir
     local oldGui = playerGui:FindFirstChild("SharpAdGUI")
     if oldGui then oldGui:Destroy() end
     
@@ -122,10 +212,9 @@ local function criarGUI()
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.Parent = playerGui
     
-    -- Frame principal
     local mainFrame = Instance.new("Frame")
-    mainFrame.Size = UDim2.new(0, 220, 0, 280)
-    mainFrame.Position = UDim2.new(0, 10, 0.5, -140)
+    mainFrame.Size = UDim2.new(0, 240, 0, 300)
+    mainFrame.Position = UDim2.new(0, 10, 0.5, -150)
     mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
@@ -139,7 +228,6 @@ local function criarGUI()
     stroke.Thickness = 2
     stroke.Parent = mainFrame
     
-    -- Título
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 35)
     title.BackgroundTransparency = 1
@@ -149,15 +237,29 @@ local function criarGUI()
     title.Font = Enum.Font.GothamBold
     title.Parent = mainFrame
     
-    -- Função para criar botões
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(0.9, 0, 0, 25)
+    statusLabel.Position = UDim2.new(0.05, 0, 0, 38)
+    statusLabel.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    statusLabel.TextColor3 = remoteFound and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+    statusLabel.TextSize = 12
+    statusLabel.Font = Enum.Font.Gotham
+    statusLabel.BorderSizePixel = 0
+    statusLabel.Text = remoteFound and "✓ Conectado" or "✗ Desconectado"
+    statusLabel.Parent = mainFrame
+    
+    local statusCorner = Instance.new("UICorner")
+    statusCorner.CornerRadius = UDim.new(0, 4)
+    statusCorner.Parent = statusLabel
+    
     local function criarBotao(texto, posY, cor, callback)
         local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0.9, 0, 0, 32)
+        btn.Size = UDim2.new(0.9, 0, 0, 35)
         btn.Position = UDim2.new(0.05, 0, 0, posY)
         btn.BackgroundColor3 = cor
         btn.Text = texto
         btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.TextSize = 13
+        btn.TextSize = 12
         btn.Font = Enum.Font.GothamBold
         btn.BorderSizePixel = 0
         btn.Parent = mainFrame
@@ -166,35 +268,37 @@ local function criarGUI()
         btnCorner.CornerRadius = UDim.new(0, 6)
         btnCorner.Parent = btn
         
-        btn.MouseButton1Click:Connect(callback)
+        btn.MouseButton1Click:Connect(function()
+            if remoteFound then
+                callback()
+            else
+                log("Remote não conectado!", true)
+            end
+        end)
+        
         return btn
     end
     
-    -- Botão: Abrir Caixa de Brinquedos
-    criarBotao("Abrir Caixa de Brinquedos", 42, Color3.fromRGB(50, 120, 200), function()
+    criarBotao("🎁 Brinquedos", 70, Color3.fromRGB(50, 120, 200), function()
         abrirCaixaGratis("ToyBox")
     end)
     
-    -- Botão: Abrir Caixa de Ferreiro
-    criarBotao("Abrir Caixa de Ferreiro", 80, Color3.fromRGB(180, 80, 30), function()
+    criarBotao("⚒️ Ferreiro", 110, Color3.fromRGB(180, 80, 30), function()
         abrirCaixaGratis("BlacksmithBox")
     end)
     
-    -- Botão: Abrir Caixa de Comida
-    criarBotao("Abrir Caixa de Comida", 118, Color3.fromRGB(40, 160, 60), function()
+    criarBotao("🍔 Comida", 150, Color3.fromRGB(40, 160, 60), function()
         abrirCaixaGratis("FoodBox")
     end)
     
-    -- Separador
     local sep = Instance.new("Frame")
     sep.Size = UDim2.new(0.8, 0, 0, 1)
-    sep.Position = UDim2.new(0.1, 0, 0, 158)
+    sep.Position = UDim2.new(0.1, 0, 0, 190)
     sep.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
     sep.BorderSizePixel = 0
     sep.Parent = mainFrame
     
-    -- Botão: Auto-farm Toggle
-    local autoFarmBtn = criarBotao("Auto-Farm: OFF", 166, Color3.fromRGB(120, 30, 30), function() end)
+    local autoFarmBtn = criarBotao("Auto-Farm: OFF", 200, Color3.fromRGB(120, 30, 30), function() end)
     autoFarmBtn.MouseButton1Click:Connect(function()
         CONFIG.AutoFarm = not CONFIG.AutoFarm
         if CONFIG.AutoFarm then
@@ -207,20 +311,6 @@ local function criarGUI()
         end
     end)
     
-    -- Seletor de caixa para auto-farm
-    local boxNames = {"ToyBox", "BlacksmithBox", "FoodBox"}
-    local boxDisplayNames = {"Brinquedos", "Ferreiro", "Comida"}
-    local currentBoxIndex = 1
-    
-    local boxSelector = criarBotao("Auto: Brinquedos", 204, Color3.fromRGB(80, 80, 120), function() end)
-    boxSelector.MouseButton1Click:Connect(function()
-        currentBoxIndex = currentBoxIndex % 3 + 1
-        CONFIG.BoxName = boxNames[currentBoxIndex]
-        boxSelector.Text = "Auto: " .. boxDisplayNames[currentBoxIndex]
-    end)
-    
-    -- Botão minimizar
-    local minimized = false
     local minBtn = Instance.new("TextButton")
     minBtn.Size = UDim2.new(0, 25, 0, 25)
     minBtn.Position = UDim2.new(1, -30, 0, 5)
@@ -232,18 +322,18 @@ local function criarGUI()
     minBtn.Parent = mainFrame
     minBtn.ZIndex = 10
     
+    local minimized = false
     minBtn.MouseButton1Click:Connect(function()
         minimized = not minimized
         if minimized then
-            mainFrame.Size = UDim2.new(0, 220, 0, 35)
+            mainFrame.Size = UDim2.new(0, 240, 0, 35)
             minBtn.Text = "+"
         else
-            mainFrame.Size = UDim2.new(0, 220, 0, 280)
+            mainFrame.Size = UDim2.new(0, 240, 0, 300)
             minBtn.Text = "-"
         end
     end)
     
-    -- Tornar arrastável
     local dragging, dragStart, startPos
     mainFrame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -264,36 +354,57 @@ local function criarGUI()
         end
     end)
     
-    -- Status
-    local status = Instance.new("TextLabel")
-    status.Size = UDim2.new(1, 0, 0, 30)
-    status.Position = UDim2.new(0, 0, 0, 245)
-    status.BackgroundTransparency = 1
-    status.Text = "Clique para abrir grátis!"
-    status.TextColor3 = Color3.fromRGB(180, 180, 180)
-    status.TextSize = 11
-    status.Font = Enum.Font.Gotham
-    status.TextWrapped = true
-    status.Parent = mainFrame
+    log("GUI criada com sucesso!")
+end
+
+-- ===== AUTO-FARM =====
+local function autoFarmCaixas()
+    if not CONFIG.AutoFarm then return end
+    log("Auto-Farm iniciado! Caixa: " .. CONFIG.BoxName)
     
-    print("[SharpAd] GUI criada com sucesso!")
+    task.spawn(function()
+        local contador = 0
+        while CONFIG.AutoFarm do
+            contador = contador + 1
+            abrirCaixaGratis(CONFIG.BoxName)
+            task.wait(CONFIG.DelayEntreAberturas)
+        end
+    end)
 end
 
 -- ===== INICIALIZAÇÃO =====
-print("=============================================")
-print("  Sharp Afiado - Ad Bypass Script")
-print("  Removendo cooldown de anúncio...")
-print("=============================================")
+print("\n=============================================")
+print("  Sharp Afiado - Ad Bypass VERSÃO CORRIGIDA")
+print("=============================================\n")
 
--- Executar tudo
-pcall(forcarBotaoVisivel)
-buscarEForcarBotao()
-criarGUI()
+-- Encontrar o remote
+adBoxBuyRemote = encontrarRemote()
+remoteFound = adBoxBuyRemote ~= nil
 
--- Se auto-farm estiver ativo na config
-if CONFIG.AutoFarm then
-    autoFarmCaixas()
+if remoteFound then
+    log("✓✓✓ SUCESSO! RemoteEvent encontrado e pronto para usar!")
+else
+    log("✗✗✗ FALHA! Não foi possível encontrar o RemoteEvent", true)
+    log("Tente reexecutar o script ou verifique se está no jogo correto", true)
 end
 
-print("[SharpAd] Script carregado com sucesso!")
-print("[SharpAd] Use a GUI na tela para abrir caixas grátis!")
+-- Criar GUI
+criarGUI()
+
+print("\n=============================================")
+print("  Script carregado! Use a GUI para abrir caixas")
+print("=============================================\n")
+
+-- Monitorar se o remote foi encontrado depois
+task.spawn(function()
+    while not remoteFound do
+        task.wait(1)
+        if not adBoxBuyRemote then
+            adBoxBuyRemote = encontrarRemote()
+            if adBoxBuyRemote then
+                remoteFound = true
+                log("✓ RemoteEvent encontrado após espera!")
+            end
+        end
+    end
+end)
